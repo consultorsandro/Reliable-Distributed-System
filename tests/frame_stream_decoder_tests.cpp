@@ -149,6 +149,38 @@ void test_malformed_call_is_atomic() {
     require_message(decoder.consume(bytes({0, 0, 0, 1, 1})), {MessageType::Ping, {}});
 }
 
+void test_finish_contract() {
+    FrameStreamDecoder empty_decoder;
+    empty_decoder.finish();
+
+    const Message expected{MessageType::Pong, bytes({0x41, 0x42})};
+    const auto frame = FrameEncoder::encode(expected);
+
+    FrameStreamDecoder complete_decoder;
+    require_message(complete_decoder.consume(frame), expected);
+    complete_decoder.finish();
+
+    for (const auto split : {std::size_t{2}, std::size_t{5}}) {
+        FrameStreamDecoder decoder;
+
+        const auto partial =
+            std::span<const std::byte>(frame).first(split);
+        require(decoder.consume(partial).empty(),
+                "Partial frame emits no message");
+
+        require_rejection([&] { decoder.finish(); },
+                          "Incomplete frame rejected at end of input");
+
+        const auto remainder =
+            std::span<const std::byte>(frame).subspan(split);
+        require_message(decoder.consume(remainder), expected);
+
+        decoder.finish();
+    }
+}
+
+
+
 void test_reset() {
     const auto frame = bytes({0, 0, 0, 3, 1, 0xff, 0x80});
     FrameStreamDecoder decoder;
@@ -195,6 +227,7 @@ int main() {
         test_malformed_call_is_atomic();
         test_reset();
         test_maximum_message();
+        test_finish_contract();
         std::cout << "All frame stream decoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {
