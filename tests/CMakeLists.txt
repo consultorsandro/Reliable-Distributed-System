@@ -12,16 +12,18 @@ if(MSVC)
 endif()
 add_test(NAME frame_stream_decoder_tests COMMAND frame_stream_decoder_tests)
 
+add_executable(socket_ownership_tests socket_ownership_tests.cpp)
+target_link_libraries(socket_ownership_tests PRIVATE rds_transport)
+if(MSVC)
+    target_compile_options(socket_ownership_tests PRIVATE /EHsc)
+endif()
+foreach(case IN ITEMS empty acquisition move_construction move_assignment
+                      empty_move self_move unwinding)
+    add_test(NAME socket_ownership_${case} COMMAND socket_ownership_tests ${case})
+endforeach()
 if(WIN32)
-    add_executable(socket_ownership_tests socket_ownership_tests.cpp)
-    target_link_libraries(socket_ownership_tests PRIVATE rds_transport)
-    if(MSVC)
-        target_compile_options(socket_ownership_tests PRIVATE /EHsc)
-    endif()
-    foreach(case IN ITEMS empty acquisition move_construction move_assignment
-                          empty_move self_move unwinding runtime_lifecycle)
-        add_test(NAME socket_ownership_${case} COMMAND socket_ownership_tests ${case})
-    endforeach()
+    add_test(NAME socket_ownership_runtime_lifecycle
+             COMMAND socket_ownership_tests runtime_lifecycle)
 endif()
 
 if(WIN32)

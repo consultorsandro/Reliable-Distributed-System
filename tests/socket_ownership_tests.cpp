@@ -2,11 +2,17 @@
 #include "rds/transport/winsock_runtime.hpp"
 
 #include <iostream>
+#include <cerrno>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
 #include <utility>
+
+#ifndef _WIN32
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 using namespace rds::transport;
 
@@ -29,18 +35,28 @@ void require(bool condition, const char* message) {
 
 SocketHandle make_socket() {
     const auto socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (socket == INVALID_SOCKET) {
+    if (socket == INVALID_NATIVE_SOCKET) {
+#ifdef _WIN32
         throw std::system_error(::WSAGetLastError(), std::system_category(), "socket");
+#else
+        throw std::system_error(errno, std::system_category(), "socket");
+#endif
     }
     return SocketHandle(socket);
 }
 
 void require_live(NativeSocket socket) {
     int type = 0;
+#ifdef _WIN32
     int size = sizeof(type);
     require(::getsockopt(socket, SOL_SOCKET, SO_TYPE,
                         reinterpret_cast<char*>(&type), &size) == 0,
             "Owned socket must remain usable");
+#else
+    socklen_t size = sizeof(type);
+    require(::getsockopt(socket, SOL_SOCKET, SO_TYPE, &type, &size) == 0,
+            "Owned socket must remain usable");
+#endif
     require(type == SOCK_STREAM, "Expected stream socket");
 }
 
@@ -48,23 +64,32 @@ void require_live(NativeSocket socket) {
 // by this single-threaded test. This observes closure, not exact close-call counts.
 void require_closed(NativeSocket socket) {
     int type = 0;
+#ifdef _WIN32
     int size = sizeof(type);
     const int result = ::getsockopt(socket, SOL_SOCKET, SO_TYPE,
                                    reinterpret_cast<char*>(&type), &size);
     const int error = ::WSAGetLastError();
     require(result == SOCKET_ERROR && error == WSAENOTSOCK,
             "Released handle must no longer identify a socket");
+#else
+    socklen_t size = sizeof(type);
+    const int result = ::getsockopt(socket, SOL_SOCKET, SO_TYPE, &type, &size);
+    const int error = errno;
+    require(result == -1 && error == EBADF,
+            "Released descriptor must no longer be open");
+#endif
 }
 
 void run(std::string_view name) {
     if (name == "empty") {
         const SocketHandle empty;
-        const SocketHandle invalid(INVALID_SOCKET);
-        require(empty.nativeHandle() == INVALID_SOCKET, "Default state is empty");
-        require(invalid.nativeHandle() == INVALID_SOCKET, "Invalid adoption is empty");
+        const SocketHandle invalid(INVALID_NATIVE_SOCKET);
+        require(empty.nativeHandle() == INVALID_NATIVE_SOCKET, "Default state is empty");
+        require(invalid.nativeHandle() == INVALID_NATIVE_SOCKET, "Invalid adoption is empty");
         return; // Also exercises destruction without Winsock initialization.
     }
     if (name == "runtime_lifecycle") {
+#ifdef _WIN32
         for (int iteration = 0; iteration < 2; ++iteration) {
             {
                 const WinsockRuntime outer;
@@ -83,6 +108,9 @@ void run(std::string_view name) {
                     "Last runtime destruction must balance startup");
         }
         return;
+#else
+        throw std::invalid_argument("runtime_lifecycle is Windows-only");
+#endif
     }
     const WinsockRuntime runtime;
     if (name == "acquisition") {
@@ -98,7 +126,7 @@ void run(std::string_view name) {
         const auto raw = source.nativeHandle();
         {
             const SocketHandle destination(std::move(source));
-            require(source.nativeHandle() == INVALID_SOCKET, "Moved source is empty");
+            require(source.nativeHandle() == INVALID_NATIVE_SOCKET, "Moved source is empty");
             require(destination.nativeHandle() == raw, "Move preserves handle");
             require_live(raw);
         }
@@ -111,7 +139,7 @@ void run(std::string_view name) {
             auto source = make_socket();
             transferred = source.nativeHandle();
             destination = std::move(source);
-            require(source.nativeHandle() == INVALID_SOCKET, "Assigned source is empty");
+            require(source.nativeHandle() == INVALID_NATIVE_SOCKET, "Assigned source is empty");
             require(destination.nativeHandle() == transferred, "Assignment preserves handle");
             require_closed(replaced);
         }
@@ -121,11 +149,11 @@ void run(std::string_view name) {
     } else if (name == "empty_move") {
         SocketHandle source;
         SocketHandle destination(std::move(source));
-        require(destination.nativeHandle() == INVALID_SOCKET, "Empty move stays empty");
+        require(destination.nativeHandle() == INVALID_NATIVE_SOCKET, "Empty move stays empty");
         auto owned = make_socket();
         const auto raw = owned.nativeHandle();
         owned = std::move(destination);
-        require(owned.nativeHandle() == INVALID_SOCKET, "Empty assignment clears owner");
+        require(owned.nativeHandle() == INVALID_NATIVE_SOCKET, "Empty assignment clears owner");
         require_closed(raw);
     } else if (name == "self_move") {
         auto owner = make_socket();
@@ -136,7 +164,7 @@ void run(std::string_view name) {
         require_live(raw);
     } else if (name == "unwinding") {
         struct Expected {};
-        NativeSocket raw = INVALID_SOCKET;
+        NativeSocket raw = INVALID_NATIVE_SOCKET;
         try {
             const auto owner = make_socket();
             raw = owner.nativeHandle();
