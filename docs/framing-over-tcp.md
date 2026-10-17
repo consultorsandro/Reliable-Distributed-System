@@ -49,9 +49,11 @@ or a response. Already returned Messages own their payload and survive connectio
 
 ## Executable evidence
 
-Ten new CTest entries: one component test and nine real loopback integration cases.
-All previous 28 runtime entries remain unchanged. Existing static assertions are
-preserved; no new static assertions are needed for the dynamic EOF contract.
+Ten CTest entries are enabled on Windows and Linux: one component test and nine real
+loopback integration cases. Existing static assertions are preserved; no new static
+assertions are needed for the dynamic EOF contract. Historical Windows/MSVC evidence
+is retained in `framing-over-tcp-validation.md`; Linux/POSIX evidence is recorded in
+`framing-over-tcp-linux-validation.md`.
 
 | Case | Observed property | Limit |
 | --- | --- | --- |
@@ -77,9 +79,10 @@ CTest's 20-second harness timeout bounds hangs without adding production timeout
 
 No actual short native send, arbitrary remote failures, packet-loss recovery, TLS,
 authentication, Internet connectivity, application acknowledgement, retry/deduplication,
-timeout, performance, Release, or non-Windows validation is claimed. Exact chunk/packet
+production timeout, performance, or Release validation is claimed. Exact chunk/packet
 boundaries are deliberately unspecified. Protocol/framing and byte-transport guarantees
-remain separate from application reliability.
+remain separate from application reliability. Windows and Linux validations are separate
+platform-specific evidence; neither substitutes for current testing of the other.
 
 Next: Step 3.4-B5 — First End-to-End PING/PONG Exchange across real Client and Server
 processes. B5 is not implemented here.
