@@ -7,6 +7,15 @@
 #include <type_traits>
 #include <utility>
 
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <cerrno>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
 using namespace rds::transport;
 static_assert(!std::is_copy_constructible_v<TcpConnection>);
 static_assert(!std::is_copy_assignable_v<TcpConnection>);
@@ -25,7 +34,11 @@ void require(bool value, const char* message) {
 }
 void connected(const TcpConnection& connection) {
     sockaddr_in peer{};
+#ifdef _WIN32
     int size = sizeof(peer);
+#else
+    socklen_t size = sizeof(peer);
+#endif
     require(::getpeername(connection.nativeHandle(), reinterpret_cast<sockaddr*>(&peer), &size) == 0,
             "Expected an established peer");
     require(peer.sin_family == AF_INET && peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK),
@@ -33,10 +46,17 @@ void connected(const TcpConnection& connection) {
 }
 void closed(NativeSocket socket) {
     int type = 0;
+#ifdef _WIN32
     int size = sizeof(type);
     const int result = ::getsockopt(socket, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &size);
     const int error = ::WSAGetLastError();
     require(result == SOCKET_ERROR && error == WSAENOTSOCK, "Expected closed socket");
+#else
+    socklen_t size = sizeof(type);
+    const int result = ::getsockopt(socket, SOL_SOCKET, SO_TYPE, &type, &size);
+    const int error = errno;
+    require(result == -1 && error == EBADF, "Expected closed socket");
+#endif
 }
 template<class F> void systemFailure(F operation, std::string_view name, int code) {
     try { operation(); }
@@ -50,10 +70,12 @@ template<class F> void systemFailure(F operation, std::string_view name, int cod
     throw std::runtime_error("Expected system_error");
 }
 void run(std::string_view name) {
+#ifdef _WIN32
     if (name == "no_runtime") {
         systemFailure([] { (void)connectTcp("127.0.0.1", 1); }, "socket", WSANOTINITIALISED);
         return;
     }
+#endif
     const WinsockRuntime runtime;
     if (name == "invalid_address") {
         for (const auto address : {std::string_view{}, std::string_view("999.1.2.3"),
@@ -71,23 +93,35 @@ void run(std::string_view name) {
         return;
     }
     if (name == "refusal") {
-        // Retain an exclusively bound, non-listening socket: no close/rebind race.
+        // Retain a bound, non-listening socket: no unused-port close/rebind race.
         SocketHandle reserved(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
-        require(reserved.nativeHandle() != INVALID_SOCKET, "Reservation socket failed");
+        require(reserved.nativeHandle() != INVALID_NATIVE_SOCKET, "Reservation socket failed");
+#ifdef _WIN32
         const BOOL exclusive = TRUE;
         require(::setsockopt(reserved.nativeHandle(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
                             reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)) == 0,
                 "Reservation exclusivity failed");
+#endif
         sockaddr_in local{};
         local.sin_family = AF_INET;
         local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         require(::bind(reserved.nativeHandle(), reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0,
                 "Reservation bind failed");
+#ifdef _WIN32
         int size = sizeof(local);
+#else
+        socklen_t size = sizeof(local);
+#endif
         require(::getsockname(reserved.nativeHandle(), reinterpret_cast<sockaddr*>(&local), &size) == 0,
                 "Reservation port discovery failed");
         systemFailure([&] { (void)connectTcp("127.0.0.1", ntohs(local.sin_port)); },
-                      "connect", WSAECONNREFUSED);
+                      "connect",
+#ifdef _WIN32
+                      WSAECONNREFUSED
+#else
+                      ECONNREFUSED
+#endif
+        );
         return;
     }
     TcpListener listener("127.0.0.1", 0);
@@ -95,13 +129,31 @@ void run(std::string_view name) {
     require(port != 0, "Expected OS-assigned port");
     if (name == "listener") return;
     if (name == "bind_failure") {
-        systemFailure([&] { const TcpListener duplicate("127.0.0.1", port); }, "bind", WSAEADDRINUSE);
+        systemFailure([&] { const TcpListener duplicate("127.0.0.1", port); }, "bind",
+#ifdef _WIN32
+                      WSAEADDRINUSE
+#else
+                      EADDRINUSE
+#endif
+        );
         return;
     }
     if (name == "listener_moves") {
         TcpListener moved(std::move(listener));
-        systemFailure([&] { (void)listener.accept(); }, "accept", WSAENOTSOCK);
-        systemFailure([&] { (void)listener.localPort(); }, "getsockname", WSAENOTSOCK);
+        systemFailure([&] { (void)listener.accept(); }, "accept",
+#ifdef _WIN32
+                      WSAENOTSOCK
+#else
+                      EBADF
+#endif
+        );
+        systemFailure([&] { (void)listener.localPort(); }, "getsockname",
+#ifdef _WIN32
+                      WSAENOTSOCK
+#else
+                      EBADF
+#endif
+        );
         TcpListener destination("127.0.0.1", 0);
         destination = std::move(moved);
         require(destination.localPort() == port, "Listener move must preserve bound port");
@@ -138,12 +190,12 @@ void run(std::string_view name) {
     } else if (name == "connection_moves") {
         const auto raw = accepted.nativeHandle();
         auto moved = std::move(accepted);
-        require(accepted.nativeHandle() == INVALID_SOCKET, "Moved source must be empty");
+        require(accepted.nativeHandle() == INVALID_NATIVE_SOCKET, "Moved source must be empty");
         require(moved.nativeHandle() == raw, "Move must transfer socket");
         const auto replaced = client.nativeHandle();
         client = std::move(moved);
         closed(replaced); // No intervening socket allocation.
-        require(moved.nativeHandle() == INVALID_SOCKET, "Assigned source must be empty");
+        require(moved.nativeHandle() == INVALID_NATIVE_SOCKET, "Assigned source must be empty");
         require(client.nativeHandle() == raw, "Assignment must transfer socket");
         connected(client);
     } else throw std::invalid_argument("Unknown test case");

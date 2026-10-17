@@ -18,6 +18,7 @@ add_library(rds_transport
     $<$<BOOL:${WIN32}>:${CMAKE_CURRENT_SOURCE_DIR}/src/transport/tcp.cpp>
     $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_CURRENT_SOURCE_DIR}/src/transport/socket_handle_posix.cpp>
     $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_CURRENT_SOURCE_DIR}/src/transport/winsock_runtime_posix.cpp>
+    $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_CURRENT_SOURCE_DIR}/src/transport/tcp_posix.cpp>
 )
 target_include_directories(rds_transport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

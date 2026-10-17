@@ -11,7 +11,7 @@ namespace rds::transport {
 
 class TcpListener;
 
-// Exclusively owns an established socket. WinsockRuntime must outlive this owner.
+// Exclusively owns an established socket. On Windows, WinsockRuntime must outlive it.
 class TcpConnection {
 public:
     TcpConnection(const TcpConnection&) = delete;
@@ -26,11 +26,11 @@ public:
 
     // One bounded native receive: positive count = data, zero = orderly EOF.
     // Empty buffers throw invalid_argument; native errors throw system_error.
-    // Nonempty byte operations on moved-from owners report WSAENOTSOCK.
+    // Nonempty byte operations on moved-from owners report a native error.
     [[nodiscard]] std::size_t receive(std::span<std::byte> buffer);
 
     // Borrowed only: do not close, adopt, or change socket ownership/settings.
-    // A moved-from connection returns INVALID_SOCKET.
+    // A moved-from connection returns INVALID_NATIVE_SOCKET.
     [[nodiscard]] NativeSocket nativeHandle() const noexcept { return socket_.nativeHandle(); }
 
 private:
@@ -40,7 +40,7 @@ private:
     SocketHandle socket_;
 };
 
-// Blocking, numeric IPv4 only. Caller must keep WinsockRuntime alive.
+// Blocking, numeric IPv4 only. On Windows, caller must keep WinsockRuntime alive.
 [[nodiscard]] TcpConnection connectTcp(std::string_view address, std::uint16_t port);
 
 } // namespace rds::transport

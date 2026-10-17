@@ -1,7 +1,37 @@
 # TCP connection establishment (Step 3.4-B2)
 
-Phase 3 remains in progress. The Windows-only `rds_transport` library now
-establishes synchronous TCP connections without depending on protocol or framing.
+Phase 3 remains in progress. `rds_transport` establishes synchronous TCP
+connections on Windows and Linux without depending on protocol or framing.
+
+## Linux/POSIX extension
+
+`src/transport/tcp_posix.cpp` implements listener creation, ephemeral-port
+discovery, blocking accept, and blocking connect with `socket`, `bind`, `listen`,
+`getsockname`, `accept`, `connect`, and `inet_pton`. It uses `socklen_t` and captures
+`errno` immediately after native failures, throwing `std::system_error` with the
+system category. Numeric IPv4 validation continues to throw `std::invalid_argument`.
+POSIX `accept` and `connect` surface `EINTR` rather than retrying automatically;
+the public API has no implicit interruption, retry, or timeout policy.
+
+Windows remains implemented by `src/transport/tcp.cpp`, including
+`SO_EXCLUSIVEADDRUSE`, establishment, and the existing byte operations.
+`src/transport/socket_handle.cpp` owns Windows `SOCKET` cleanup with `closesocket`,
+and `src/transport/winsock_runtime.cpp` owns `WSAStartup`/`WSACleanup`. CMake selects
+those files and `ws2_32` only on Windows. The Linux equivalents are
+`src/transport/socket_handle_posix.cpp` and the no-op compatibility runtime in
+`src/transport/winsock_runtime_posix.cpp`.
+
+Linux deliberately uses normal `bind` behavior and enables neither `SO_REUSEADDR`
+nor `SO_REUSEPORT`. A duplicate active listener on the same address and port is
+tested and rejected. This is not equivalent to Windows `SO_EXCLUSIVEADDRUSE`:
+platform exclusivity guarantees differ, and TCP state such as `TIME_WAIT`, address
+specificity, and kernel policy can limit or delay port rebinding after closure.
+
+The public signatures and move-only RAII ownership contracts are unchanged.
+Linux byte transport and framing-over-TCP remain outside this increment and their
+tests remain disabled on Linux. See
+[Linux validation](tcp-establishment-linux-validation.md); the historical
+[Windows validation](tcp-establishment-validation.md) is preserved.
 
 ## API and ownership
 
@@ -70,7 +100,8 @@ and resource-exhaustion failure are handled but not fault-injected.
 Next: **Step 3.4-B3 — TCP Byte Transport**, focused on the previously defined
 `sendAll()` and `receive()` contracts. B3 is not implemented here.
 
-See [session validation](tcp-establishment-validation.md) for commands and results.
+The original text below describes the historical Windows B2 increment. See
+[Windows session validation](tcp-establishment-validation.md) for its commands and results.
 
 ## Subsequent byte-transport increment
 

@@ -46,5 +46,7 @@ with the Winsock error contract; closed Linux descriptors are checked for
 `EBADF`. Exact native error numbers are not treated as cross-platform contracts.
 
 The Winsock runtime lifecycle case remains Windows-only. Linux connection
-establishment, listener behavior, byte transport, framing over TCP, and client /
-server application behavior remain outside this increment.
+establishment and listener behavior were added and validated in a subsequent
+increment; see `tcp-establishment-linux-validation.md`. Linux byte transport,
+framing over TCP, and client/server application behavior remain outside the
+current Linux implementation.

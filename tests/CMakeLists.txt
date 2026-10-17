@@ -26,18 +26,20 @@ if(WIN32)
              COMMAND socket_ownership_tests runtime_lifecycle)
 endif()
 
+add_executable(tcp_establishment_tests tcp_establishment_tests.cpp)
+target_link_libraries(tcp_establishment_tests PRIVATE rds_transport)
+if(MSVC)
+    target_compile_options(tcp_establishment_tests PRIVATE /EHsc)
+endif()
+foreach(case IN ITEMS listener establishment independence connection_moves
+                      listener_moves listener_destruction refusal bind_failure
+                      invalid_address)
+    add_test(NAME tcp_${case} COMMAND tcp_establishment_tests ${case})
+    set_tests_properties(tcp_${case} PROPERTIES TIMEOUT 20)
+endforeach()
 if(WIN32)
-    add_executable(tcp_establishment_tests tcp_establishment_tests.cpp)
-    target_link_libraries(tcp_establishment_tests PRIVATE rds_transport)
-    if(MSVC)
-        target_compile_options(tcp_establishment_tests PRIVATE /EHsc)
-    endif()
-    foreach(case IN ITEMS listener establishment independence connection_moves
-                          listener_moves listener_destruction refusal bind_failure
-                          invalid_address no_runtime)
-        add_test(NAME tcp_${case} COMMAND tcp_establishment_tests ${case})
-        set_tests_properties(tcp_${case} PROPERTIES TIMEOUT 20)
-    endforeach()
+    add_test(NAME tcp_no_runtime COMMAND tcp_establishment_tests no_runtime)
+    set_tests_properties(tcp_no_runtime PROPERTIES TIMEOUT 20)
 endif()
 
 if(WIN32)

@@ -4,10 +4,11 @@
 
 namespace rds::transport {
 
-// Exclusive listening socket owner. WinsockRuntime must outlive this owner.
+// Exclusive listening socket owner. On Windows, WinsockRuntime must outlive it.
 class TcpListener {
 public:
-    // Numeric IPv4; port zero requests an OS-assigned port.
+    // Numeric IPv4; port zero requests an OS-assigned port. Bind exclusivity is
+    // platform-specific: Windows uses SO_EXCLUSIVEADDRUSE; POSIX uses plain bind.
     TcpListener(std::string_view address, std::uint16_t port);
     TcpListener(const TcpListener&) = delete;
     TcpListener& operator=(const TcpListener&) = delete;
