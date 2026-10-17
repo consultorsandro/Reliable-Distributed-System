@@ -1,7 +1,9 @@
 #include "rds/transport/tcp_listener.hpp"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
+#include <limits>
 #include <netinet/in.h>
 #include <stdexcept>
 #include <sys/socket.h>
@@ -76,6 +78,38 @@ TcpConnection connectTcp(std::string_view address, std::uint16_t port) {
     if (::connect(socket.nativeHandle(), reinterpret_cast<const sockaddr*>(&remote),
                   sizeof(remote)) == -1) fail("connect");
     return TcpConnection(std::move(socket));
+}
+
+void TcpConnection::sendAll(std::span<const std::byte> data) {
+    while (!data.empty()) {
+        const auto length = (std::min)(
+            data.size(), static_cast<std::size_t>((std::numeric_limits<ssize_t>::max)()));
+        ssize_t sent;
+        do {
+            // Suppress SIGPIPE for this operation only. Process-wide signal policy belongs
+            // to the application, and the connection retains ownership after an error.
+            sent = ::send(socket_.nativeHandle(), data.data(), length, MSG_NOSIGNAL);
+        } while (sent == -1 && errno == EINTR);
+        if (sent == -1) fail("send");
+        // POSIX does not normally return zero for a nonempty blocking send, but treating
+        // it as failure preserves the loop's forward-progress invariant.
+        if (sent == 0) throw std::runtime_error("send made no progress for nonempty input");
+        data = data.subspan(static_cast<std::size_t>(sent));
+    }
+}
+
+std::size_t TcpConnection::receive(std::span<std::byte> buffer) {
+    if (buffer.empty()) throw std::invalid_argument("receive requires a nonempty buffer");
+    const auto length = (std::min)(
+        buffer.size(), static_cast<std::size_t>((std::numeric_limits<ssize_t>::max)()));
+    ssize_t received;
+    do {
+        // EINTR means this native read made no progress. Retry only that read; after one
+        // successful recv, return its actual count (including zero for orderly EOF).
+        received = ::recv(socket_.nativeHandle(), buffer.data(), length, 0);
+    } while (received == -1 && errno == EINTR);
+    if (received == -1) fail("recv");
+    return static_cast<std::size_t>(received);
 }
 
 } // namespace rds::transport

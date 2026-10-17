@@ -21,7 +21,7 @@ public:
 
     // Blocking. Success means local socket acceptance, not peer processing.
     // Empty input is a no-op, including on a moved-from owner. Failure may
-    // follow partial acceptance; no progress count or automatic retry is provided.
+    // follow partial acceptance; no progress count or application retry is provided.
     void sendAll(std::span<const std::byte> data);
 
     // One bounded native receive: positive count = data, zero = orderly EOF.

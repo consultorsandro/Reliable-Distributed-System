@@ -63,5 +63,6 @@ rejection, and POSIX native-error propagation.
 
 Not tested: Release configuration, Windows behavior in this session, external
 networks, IPv6, DNS, injected `EINTR`, resource exhaustion, or post-close rebinding.
-The next recommended increment is POSIX `TcpConnection::sendAll` and `receive`
-with focused Linux byte-transport tests.
+The recommended POSIX `TcpConnection::sendAll` and `receive` increment was subsequently
+implemented and validated; see `tcp-byte-transport-linux-validation.md`. This report's
+establishment results remain historical evidence for their original session.

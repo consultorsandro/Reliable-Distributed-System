@@ -1,4 +1,4 @@
-# TCP byte transport — Step 3.4-B3
+# TCP byte transport — Step 3.4-B3 and Linux/POSIX portability
 
 Phase 3 remains in progress. TcpConnection now provides blocking binary byte I/O.
 SocketHandle ownership, WinsockRuntime lifetime, and B2 establishment remain intact.
@@ -9,9 +9,10 @@ The transport library has no protocol/framing dependency or message-size policy.
 `void sendAll(std::span<const std::byte> data)` submits bytes until all have been
 accepted by successful local socket send operations or an error occurs. Empty input
 is a no-op, even on a moved-from owner, with no native call. Each native length is
-bounded by INT_MAX before conversion to int. Positive send results advance the span
-by the actual count, preserving the remaining suffix across short successful sends.
-SOCKET_ERROR throws std::system_error with the native code, operation, and message.
+bounded by the native return type (`INT_MAX` on Winsock and `SSIZE_MAX` on POSIX).
+Positive send results advance the span by the actual count, preserving the remaining
+suffix across short successful sends. Native failure throws `std::system_error` with
+the native code, operation, and message.
 A zero result for nonempty input throws std::runtime_error instead of looping without
 progress; there is no fresh native error code to associate with that result.
 
@@ -21,17 +22,26 @@ of a prefix. The API returns no partial count and cannot roll back accepted byte
 The caller must never infer zero bytes sent from an exception or blindly replay the
 whole input. Automatic retry and application deduplication are outside B3.
 
-`[[nodiscard]] std::size_t receive(std::span<std::byte> buffer)` performs one native
-recv with capacity bounded by INT_MAX. It does not fill the buffer or preserve send
-boundaries. A positive count identifies bytes written at the start; zero means orderly
-EOF after queued stream data is exhausted; SOCKET_ERROR throws std::system_error.
+`[[nodiscard]] std::size_t receive(std::span<std::byte> buffer)` performs one successful
+native recv with capacity bounded by the native return type. It does not fill the buffer
+or preserve send boundaries. A positive count identifies bytes written at the start;
+zero means orderly EOF after queued stream data is exhausted; native failure throws
+`std::system_error`.
 Empty destinations throw std::invalid_argument before any socket operation, preserving
 zero exclusively for EOF. A nonempty operation on a moved-from connection reports
 WSAENOTSOCK. No connection-liveness accessor is added.
 
-Both operations are synchronous, without timeout policy, retries, polling, production
-threads, or asynchronous I/O. The caller must keep WinsockRuntime alive and supply
-valid spans. Binary values, including NUL and high-bit bytes, have no text semantics.
+Both operations are synchronous, without timeout policy, reconnection, application-level
+retry, polling, production threads, or asynchronous I/O. On POSIX, an `EINTR` result
+retries the interrupted native call: `sendAll` retains its already-accepted prefix and
+continues with the remaining suffix, while `receive` returns after its first successful
+native receive. The caller must keep WinsockRuntime alive on Windows and supply valid
+spans. Binary values, including NUL and high-bit bytes, have no text semantics.
+
+Linux sends pass `MSG_NOSIGNAL`, suppressing `SIGPIPE` for that operation without
+installing a signal handler or changing process-wide disposition. POSIX errors capture
+`errno` immediately and use `std::system_category()`. An I/O failure does not close,
+replace, or release the socket; `SocketHandle` remains the sole cleanup owner.
 
 ## Failure and remaining state
 
@@ -50,8 +60,9 @@ a moved-from source do not damage the moved-to owner's established connection.
 
 ## Test design and evidence boundaries
 
-Eight new individually registered CTest cases supplement the unchanged 20 previous
-cases. Each process initializes Winsock before socket owners. A test-only Pair helper
+Eight portable individually registered CTest cases supplement the preceding cases, and
+Linux registers a ninth SIGPIPE case. Each process initializes Winsock before socket
+owners where required. A test-only Pair helper
 uses loopback and port zero, connecting through the backlog before accept. Payloads
 are bounded (at most 4096 bytes) and sent before receive; no helper threads or sleeps
 are needed for these modest transfers in the tested environment. Each new CTest has
@@ -67,6 +78,7 @@ a 20-second process timeout to bound hangs, not a production transport timeout.
 | sequential_sends | Three sends are reconstructed as one ordered stream, without assumed call correspondence |
 | orderly_closure | All expected bytes are consumed before peer destruction; subsequent receive returns zero |
 | moved_from | Both nonempty byte operations report native invalid-socket failures; moved-to connection remains usable |
+| sigpipe_suppression (Linux) | Abortive peer close yields `EPIPE` as `system_error`; the process is not terminated by `SIGPIPE` |
 
 The collection helper checks positive counts, capacity bounds, exact stream content,
 untouched destination suffix, and sentinel bytes outside the supplied span. It tolerates
@@ -93,12 +105,15 @@ behavior. The large payload test is neither a benchmark nor an exhaustion test.
 ## Unresolved scope
 
 No external network, remote-failure recovery, packet-loss behavior, production throughput,
-Release build, or non-Windows platform was validated. Framing, Message transmission,
+or Release build was validated. Linux/POSIX validation is recorded separately; injected
+`EINTR` remains untested. Framing, Message transmission,
 PING/PONG, application delivery/acknowledgement, retry/deduplication, persistence,
 timeouts, reconnect, security, and distributed fault tolerance remain outside scope.
-Next increment: integrate the existing validated framing layer with byte transport.
+Next increment: enable and validate the existing framing-over-TCP suite on Linux.
 
 See [session validation](tcp-byte-transport-validation.md) for executable results.
+See [Linux/POSIX validation](tcp-byte-transport-linux-validation.md) for the portability
+increment. The original Windows report remains historical Windows evidence.
 
 ## Subsequent framing integration
 

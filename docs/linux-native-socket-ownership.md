@@ -47,6 +47,6 @@ with the Winsock error contract; closed Linux descriptors are checked for
 
 The Winsock runtime lifecycle case remains Windows-only. Linux connection
 establishment and listener behavior were added and validated in a subsequent
-increment; see `tcp-establishment-linux-validation.md`. Linux byte transport,
-framing over TCP, and client/server application behavior remain outside the
-current Linux implementation.
+increment; see `tcp-establishment-linux-validation.md`. Linux byte transport was
+then added and validated; see `tcp-byte-transport-linux-validation.md`. Framing
+over TCP and client/server application behavior remain outside current Linux validation.

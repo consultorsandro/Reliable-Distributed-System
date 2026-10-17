@@ -8,6 +8,14 @@
 #include <system_error>
 #include <vector>
 
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <cerrno>
+#include <poll.h>
+#include <sys/socket.h>
+#endif
+
 using namespace rds::transport;
 
 namespace {
@@ -49,7 +57,13 @@ std::size_t collect(TcpConnection& receiver, std::span<const std::byte> expected
 template<class F> void invalidSocket(F operation, std::string_view name) {
     try { operation(); }
     catch (const std::system_error& error) {
-        require(error.code().value() == WSAENOTSOCK, "Expected WSAENOTSOCK");
+        require(error.code().value() ==
+#ifdef _WIN32
+                WSAENOTSOCK,
+#else
+                EBADF,
+#endif
+                "Expected native invalid-socket error");
         require(error.code().category() == std::system_category(), "Expected native error category");
         require(std::string_view(error.what()).find(name) != std::string_view::npos,
                 "Missing operation name");
@@ -118,6 +132,31 @@ void run(std::string_view name) {
         invalidSocket([&] { (void)pair.client.receive(buffer); }, "recv");
         owner.sendAll(payload);
         collect(pair.server, payload, 64);
+#ifndef _WIN32
+    } else if (name == "sigpipe_suppression") {
+        // An abortive peer close makes the failure deterministic without sleeps. poll()
+        // bounds the wait for the reset; CTest supplies a second process-level bound.
+        linger abortive{1, 0};
+        require(::setsockopt(pair.server.nativeHandle(), SOL_SOCKET, SO_LINGER,
+                             &abortive, sizeof(abortive)) == 0,
+                "Failed to configure abortive peer close");
+        pair.server = TcpConnection(std::move(pair.client));
+        pollfd descriptor{pair.server.nativeHandle(), POLLIN, 0};
+        require(::poll(&descriptor, 1, 2000) == 1, "Timed out waiting for peer reset");
+        std::array<std::byte, 1> buffer{};
+        try { (void)pair.server.receive(buffer); }
+        catch (const std::system_error& error) {
+            require(error.code().value() == ECONNRESET, "Expected peer reset before send");
+        }
+        try { pair.server.sendAll(payload); }
+        catch (const std::system_error& error) {
+            require(error.code().category() == std::system_category(),
+                    "Expected native send error category");
+            require(error.code().value() == EPIPE, "Expected EPIPE after peer reset");
+            return;
+        }
+        throw std::runtime_error("Expected send failure after peer closure");
+#endif
     } else throw std::invalid_argument("Unknown byte transport test");
 }
 } // namespace
